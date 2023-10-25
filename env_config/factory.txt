@@ -1,0 +1,10 @@
+sn=123456
+pid=76724
+did=640383820
+key=NhJQVfFDgiu3OjoW
+mac=C8:BF:4C:F0:00:79
+oob=12YxcpWitPgy7RNVJFMsSw==
+vendor=xiaomi
+model=midr.camera.bw400p
+burn_in_mode=0
+burn_in_flag=0

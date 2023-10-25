@@ -1,0 +1,40 @@
+#!/bin/sh
+
+if [ ! -d /sys/class/gpio/gpio45/ ];then
+    echo 45 > /sys/class/gpio/export
+fi
+
+if [ ! -d /sys/class/gpio/gpio46/ ];then
+    echo 46 > /sys/class/gpio/export
+fi
+
+do_on()
+{
+    echo low    > /sys/class/gpio/gpio46/direction
+    echo high    > /sys/class/gpio/gpio45/direction
+    sleep 0.15
+    echo low    > /sys/class/gpio/gpio46/direction
+    echo low    > /sys/class/gpio/gpio45/direction
+}
+
+do_off()
+{
+    echo high    > /sys/class/gpio/gpio46/direction
+    echo low    > /sys/class/gpio/gpio45/direction
+    sleep 0.15
+    echo low    > /sys/class/gpio/gpio46/direction
+    echo low    > /sys/class/gpio/gpio45/direction
+}
+
+case "$1" in
+        on)
+                "do_$1"
+                ;;
+        off)
+                "do_$1"
+                ;;
+        *)
+                echo "Usage: $0 {on/off}"
+                exit 1
+                ;;
+esac

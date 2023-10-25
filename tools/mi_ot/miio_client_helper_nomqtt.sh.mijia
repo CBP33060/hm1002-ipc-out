@@ -1,0 +1,527 @@
+#!/bin/sh
+# miio_client_ver: 4.3.7
+WIFI_START_SCRIPT="/system/mi_ot/wifi_start.sh.mijia"
+MIIO_RECV_LINE="/system/mi_ot/miio_recv_line"
+MIIO_SEND_LINE="/system/mi_ot/miio_send_line"
+JSHON="/system/mi_ot/jshon"
+WIFI_MAX_RETRY=3
+WIFI_RETRY_INTERVAL=3
+
+DEFAULT_TIMEZONE_LINK="/etc/TZ"
+
+GLIBC_TIMEZONE_DIR="/usr/share/zoneinfo"
+UCLIBC_TIMEZONE_DIR="/usr/share/zoneinfo"
+
+YOUR_LINK_TIMEZONE_FILE="/etc/TZ"
+YOUR_TIMEZONE_DIR=$UCLIBC_TIMEZONE_DIR
+
+LINK_HOSTS_FILE="/etc/hosts"
+PRC_LINK_HOSTS_FILE="/etc/hosts.prc"
+GLOBAL_LINK_HOSTS_FILE="/etc/hosts.global"
+
+# 畅快连路由器默认隐藏SSID，请勿修改
+MIIO_NET_PROVISIONER_SSID="25c829b1922d3123_miwifi"
+
+MIIO_NET_AUTO_PROVISION=0		# 支持畅快连一键配网时，设置为1；否则设置为0
+MIIO_NET_SMART_CONFIG=0			# 支持畅快连改密同步时，设置为1；否则设置为0
+MIIO_NET_5G=0					# 支持5G时，设置为1；否则设置为0
+MIIO_AUTO_OTA=false				# 支持自动OTA升级时，设置为true；否则设置为false
+
+sanity_check() {
+	if [ ! -e $WIFI_START_SCRIPT ]; then
+		echo "Can't find wifi_start.sh: $WIFI_START_SCRIPT"
+		echo 'Please change $WIFI_START_SCRIPT'
+		# exit 1
+	fi
+}
+
+send_helper_ready() {
+	ready_msg="{\"method\":\"_internal.helper_ready\"}"
+	echo $ready_msg
+	$MIIO_SEND_LINE "$ready_msg"
+}
+
+request_dinfo() {
+	dinfo_did=`efuse_tool did`
+    dinfo_key=`efuse_tool psk`
+    dinfo_mac=`fw_printenv factory mac`
+    dinfo_vendor=`fw_printenv factory vendor`
+    dinfo_model=`fw_printenv factory model`
+	dinfo_pin_code=`fw_printenv factory oob`
+
+	echo $dinfo_did
+	echo $dinfo_key
+	echo $dinfo_mac
+	echo $dinfo_vendor
+	echo $dinfo_model
+	echo $dinfo_pin_code
+
+	if [ $MIIO_NET_SMART_CONFIG -eq 1 ]; then
+		dinfo_wpa_intf='/var/run/wpa_supplicant/wlan0'
+	fi
+	if [ $MIIO_NET_AUTO_PROVISION -eq 1 ]; then
+		dinfo_hostapd_intf='/var/run/hostapd/p2p0'
+	fi
+	
+	dd if=/dev/mtd0 of=/tmp/uboot.bin count=2 bs=64K
+	STRING=`md5sum /tmp/uboot.bin`
+	dinfo_uboot_ver=${STRING% *}
+	rm /tmp/uboot.bin -rf
+	
+	dinfo_ota_state=
+
+	RESPONSE_DINFO="{\"method\":\"_internal.response_dinfo\",\"params\":{"
+	if [ x$dinfo_did != x ]; then
+		RESPONSE_DINFO="$RESPONSE_DINFO\"did\":$dinfo_did"
+	fi
+	if [ x$dinfo_key != x ]; then
+		RESPONSE_DINFO="$RESPONSE_DINFO,\"key\":\"$dinfo_key\""
+	fi
+	if [ x$dinfo_vendor != x ]; then
+		RESPONSE_DINFO="$RESPONSE_DINFO,\"vendor\":\"$dinfo_vendor\""
+	fi
+	if [ x$dinfo_mac != x ]; then
+		RESPONSE_DINFO="$RESPONSE_DINFO,\"mac\":\"$dinfo_mac\""
+	fi
+	if [ x$dinfo_model != x ]; then
+		RESPONSE_DINFO="$RESPONSE_DINFO,\"model\":\"$dinfo_model\""
+	fi
+	if [ x$dinfo_uboot_ver != x ]; then
+		RESPONSE_DINFO="$RESPONSE_DINFO,\"bootloader_ver\":\"$dinfo_uboot_ver\""
+	fi
+	if [ x$dinfo_wpa_intf != x ]; then
+		RESPONSE_DINFO="$RESPONSE_DINFO,\"wpa_intf\":\"$dinfo_wpa_intf\""
+	fi
+	if [ x$dinfo_hostapd_intf != x ]; then
+		RESPONSE_DINFO="$RESPONSE_DINFO,\"hostapd_intf\":\"$dinfo_hostapd_intf\""
+	fi
+	if [ x$dinfo_mjac_i2c != x ]; then
+		RESPONSE_DINFO="$RESPONSE_DINFO,\"mjac_i2c\":\"$dinfo_mjac_i2c\""
+	fi
+	if [ x$dinfo_mjac_gpio != x ]; then
+		RESPONSE_DINFO="$RESPONSE_DINFO,\"mjac_gpio\":\"$dinfo_mjac_gpio\""
+	fi
+	if [ x$dinfo_ota_state != x ]; then
+		RESPONSE_DINFO="$RESPONSE_DINFO,\"ota_state\":\"$dinfo_ota_state\""
+	fi
+	RESPONSE_DINFO="$RESPONSE_DINFO,\"OOB\":[{\"mode\":2,\"ctx\":\"\"},{\"mode\":3,\"ctx\":\"$dinfo_pin_code\"}]"
+	RESPONSE_DINFO="$RESPONSE_DINFO,\"sc_type\":[0,1,2,3,4,16]"
+	RESPONSE_DINFO="$RESPONSE_DINFO}}"
+	
+	echo $RESPONSE_DINFO
+	$MIIO_SEND_LINE "$RESPONSE_DINFO"
+}
+
+request_ot_config() {
+	ot_config_string=$1
+	ot_config_dir=${ot_config_string##*dir\":\"}
+	ot_config_dir=${ot_config_dir%%\"*}
+	dtoken_token=${ot_config_string##*ntoken\":\"}
+	dtoken_token=${dtoken_token%%\"*}
+
+	echo $ot_config_string
+	echo $ot_config_dir
+	echo $dtoken_token
+
+	bind_status=`fw_printenv user bind_status`
+	if [ x"$bind_status" != x"ok" ] ; then
+		fw_setenv user token
+	fi
+
+	miio_token=`fw_printenv user token`
+	if [ x$miio_token = x ]; then
+		fw_setenv user token $dtoken_token
+		miio_token=`fw_printenv user token`
+	fi
+
+	miio_country=`fw_printenv user country`
+	if [ -f $LINK_HOSTS_FILE ]; then
+		unlink $LINK_HOSTS_FILE
+	fi
+	if [ x"$miio_country" = x ]; then
+		ln -sf $PRC_LINK_HOSTS_FILE $LINK_HOSTS_FILE
+	else
+		ln -sf $GLOBAL_LINK_HOSTS_FILE $LINK_HOSTS_FILE
+	fi
+	
+	new_tz=`fw_printenv user timezone`
+	if [ x"$new_tz" != x -a -f $new_tz ]; then
+		ln -sf  $new_tz $YOUR_LINK_TIMEZONE_FILE
+	else
+		ln -sf  $DEFAULT_TIMEZONE_LINK $YOUR_LINK_TIMEZONE_FILE
+	fi
+	
+	#此处仅给出参考，注意中文SSID编码问题
+	#miio_ssid=`mortoxc get nvram default miio_ssid`
+	#miio_passwd=`mortoxc get nvram default miio_passwd`
+	#miio_uid=`mortoxc get nvram default miio_uid`
+	miio_ssid=`fw_printenv user wifi_ssid`
+	miio_passwd=`fw_printenv user wifi_passwd`
+	miio_uid=`fw_printenv user uid`
+
+	RESPONSE_OT_CONFIG="{\"method\":\"_internal.res_ot_config\",\"params\":{"
+	RESPONSE_OT_CONFIG="$RESPONSE_OT_CONFIG\"token\":\"$miio_token\""
+	if [ x$miio_country != x ]; then
+		RESPONSE_OT_CONFIG="$RESPONSE_OT_CONFIG,\"country\":\"$miio_country\""
+	fi
+	if [ x$miio_ssid != x ]; then
+		RESPONSE_OT_CONFIG="$RESPONSE_OT_CONFIG,\"ssid\":\"$miio_ssid\""
+	fi
+	if [ x$miio_passwd != x ]; then
+		RESPONSE_OT_CONFIG="$RESPONSE_OT_CONFIG,\"password\":\"$miio_passwd\""
+	fi
+	if [ x$miio_uid != x ]; then
+		RESPONSE_OT_CONFIG="$RESPONSE_OT_CONFIG,\"uid\":$miio_uid"
+	fi
+	RESPONSE_OT_CONFIG="$RESPONSE_OT_CONFIG}}"
+	
+	echo $RESPONSE_OT_CONFIG
+	$MIIO_SEND_LINE "$RESPONSE_OT_CONFIG"
+}
+
+req_wifi_conf_status() {
+	bind_status=`fw_printenv user bind_status`  #"ok" or ""
+
+	if [ x"$bind_status" = x"ok" ] ; then
+		REQ_WIFI_CONF_STATUS_RESPONSE="{\"method\":\"_internal.res_wifi_conf_status\",\"params\":1}"
+	else
+		if [ $MIIO_NET_AUTO_PROVISION -eq 1 ]; then
+			CMD=$WIFI_START_SCRIPT
+			${CMD} "SET_APSTA_MODE"
+			REQ_WIFI_CONF_STATUS_RESPONSE="{\"method\":\"_internal.res_wifi_conf_status\",\"params\":3}"
+		else
+			REQ_WIFI_CONF_STATUS_RESPONSE="{\"method\":\"_internal.res_wifi_conf_status\",\"params\":0}"
+		fi
+	fi
+	
+	echo $REQ_WIFI_CONF_STATUS_RESPONSE
+	$MIIO_SEND_LINE "$REQ_WIFI_CONF_STATUS_RESPONSE"
+}
+
+update_dtoken(){
+	update_token_string=$1
+	update_dtoken=${update_token_string##*ntoken\":\"}
+	update_token=${update_dtoken%%\"*}
+
+	if [ x$update_token != x ]; then
+		fw_setenv user token $update_token
+	fi
+
+	RESPONSE_UPDATE_TOKEN="{\"method\":\"_internal.token_updated\",\"params\":\"${update_token}\"}"
+	$MIIO_SEND_LINE "$RESPONSE_UPDATE_TOKEN"
+}
+
+internal_info()
+{
+	#注意中文SSID编码问题
+	ssid=`atbm_iot_cli_status ssid`
+	echo "ssid: $ssid"
+
+	bssid=`atbm_iot_cli_status bssid`
+	echo "bssid: $bssid"
+
+	ip=`atbm_iot_cli_status ip_address`
+	echo "ip: $ip"
+
+	netmask=`atbm_iot_cli_status ip_mask`
+	echo "netmask: $netmask"
+
+	gw=`atbm_iot_cli_status gate_way`
+	echo "gw: $gw"
+
+	rssi=`atbm_iot_cli_status rssi`
+	echo "rssi: $rssi"
+
+	freq=`atbm_iot_cli_status freq`
+	echo "freq: $freq"
+
+	# vendor=`factory get vendor | tr '[:lower:]' '[:upper:]'`
+	# sw_version=`grep "${vendor}_VERSION" /etc/os-release | cut -f 2 -d '='`
+	# if [ -z $sw_version ]; then
+	# 	sw_version="unknown"
+	# fi
+	sw_version="4.3.4_9999"
+
+	RESPONSE="{\"method\":\"_internal.info\",\"partner_id\":\"\",\"params\":{\
+\"hw_ver\":\"Linux\",\"fw_ver\":\"$sw_version\",\"auto_ota\":$MIIO_AUTO_OTA,\
+\"ap\":{\
+\"ssid\":\"$ssid\",\"bssid\":\"$bssid\",\"rssi\":\"$rssi\",\"freq\":$freq\
+},\
+\"netif\":{\
+\"localIp\":\"$ip\",\"mask\":\"$netmask\",\"gw\":\"$gw\"\
+}}}"
+
+	$MIIO_SEND_LINE "$RESPONSE"
+}
+
+save_wifi_conf() {
+	miio_ssid=$1
+	miio_passwd=$2
+	miio_uid=$3
+	miio_country=$4
+	miio_tz=$5
+
+	# if [ -f $LINK_HOSTS_FILE ]; then
+	# 	unlink $LINK_HOSTS_FILE
+	# fi
+	# if [ x"$miio_country" = x ]; then
+	# 	ln -sf $PRC_LINK_HOSTS_FILE $LINK_HOSTS_FILE
+	# else
+	# 	ln -sf $GLOBAL_LINK_HOSTS_FILE $LINK_HOSTS_FILE
+	# fi
+
+	# if [ x"$miio_ssid" = x ]; then
+	# 	fw_setenv user wifi_ssid
+	# else
+	# 	fw_setenv user wifi_ssid $miio_ssid
+	# fi
+
+	# if [ x"$miio_passwd" = x ]; then
+	# 	fw_setenv user wifi_passwd
+	# else
+	# 	fw_setenv user wifi_passwd $miio_passwd
+	# fi
+
+	if [ x$miio_uid = x ]; then
+		fw_setenv user uid
+	else
+		fw_setenv user uid $miio_uid
+	fi
+
+	if [ x"$miio_country" = x ]; then
+		fw_setenv user country
+	else
+		fw_setenv user country $miio_country
+	fi
+
+	if [ x"$miio_tz" = x ]; then
+		fw_setenv user timezone
+	else
+		fw_setenv user timezone $miio_tz
+	fi
+}
+
+clear_wifi_conf() {
+	fw_setenv user wifi_ssid
+	fw_setenv user wifi_passwd
+	fw_setenv user key_mgmt
+	fw_setenv user uid
+	fw_setenv user country
+	fw_setenv user bind_status
+}
+
+save_tz_conf() {
+	new_tz=$YOUR_TIMEZONE_DIR/$1
+	echo $new_tz
+	if [ -f $new_tz ]; then
+		mortoxc set nvram default timezone "$new_tz"
+		mortoxc sync nvram
+		unlink $YOUR_LINK_TIMEZONE_FILE
+		ln -sf  $new_tz $YOUR_LINK_TIMEZONE_FILE
+		echo "timezone set success:$new_tz"
+	else
+		echo "timezone is not exist:$new_tz"
+	fi
+}
+
+connect_wifi()
+{
+	cd /usr/wifi
+
+	CMD=`/usr/wifi/atbm_iot_cli wifi_mode STA`
+	echo "CMD: $CMD"
+
+	sleep 0.5
+
+	CMD=`/usr/wifi/atbm_iot_cli set_network ssid $1`
+	echo "CMD: $CMD"
+
+	if [ x"$2" = x ]; then
+		CMD=`/usr/wifi/atbm_iot_cli set_network key_mgmt NONE`
+		echo "CMD: $CMD"
+	else
+		CMD=`/usr/wifi/atbm_iot_cli set_network key $2`
+		echo "CMD: $CMD"
+
+		CMD=`/usr/wifi/atbm_iot_cli set_network key_mgmt WPA2`
+		echo "CMD: $CMD"
+	fi
+
+	CMD=`/usr/wifi/atbm_iot_cli enable_network`
+	echo "CMD: $CMD"
+	cd -
+}
+
+wifi_start()
+{
+	wifi_start_string=$1
+	
+	RESPONSE_WIFI_START=""
+	
+	miio_ssid=$(echo "$wifi_start_string" | $JSHON -e params -e ssid -u)
+	miio_passwd=$(echo "$wifi_start_string" | $JSHON -e params -e passwd -u)
+	miio_uid=$(echo "$wifi_start_string" | $JSHON -e params -e uid -u)
+	miio_country=$(echo "$wifi_start_string" | $JSHON -e params -e country_domain -u)
+	miio_tz=$(echo "$wifi_start_string" | $JSHON -e params -e tz -u)
+	miio_bssid=$(echo "$wifi_start_string" | $JSHON -e params -e bssid -u)
+	
+	bind_status=`fw_printenv user bind_status`
+	
+	echo "miio_ssid: $miio_ssid"
+	echo "miio_uid: $miio_uid"
+	echo "miio_country: $miio_country"
+	echo "miio_tz: $miio_tz"
+	echo "miio_bssid: $miio_bssid"
+
+	save_wifi_conf $miio_ssid $miio_passwd $miio_uid $miio_country $miio_tz
+
+	connect_wifi "$miio_ssid" "$miio_passwd"
+
+	#CMD=$WIFI_START_SCRIPT
+	RETRY=1
+	WIFI_SUCC=0
+	until [ $RETRY -gt $WIFI_MAX_RETRY ]
+	do
+		WIFI_SUCC=0
+		# echo "Retry $RETRY: CMD=${CMD}"
+		#${CMD} "SELECT_MASTER"
+
+		wpa_state=`atbm_iot_cli_status state`
+		echo "wpa_state: $wpa_state"
+		if [ x"$wpa_state" = x"ACTIVE" ]; then
+			break
+		else
+			WIFI_SUCC=2
+		fi
+
+		let RETRY=$RETRY+1
+		sleep $WIFI_RETRY_INTERVAL
+	done
+
+	if [ $WIFI_SUCC -eq 0 ]; then
+		#注意中文SSID编码问题
+		ssid=`atbm_iot_cli_status ssid`
+		echo "ssid: $ssid"
+
+		bssid=`atbm_iot_cli_status bssid`
+		echo "bssid: $bssid"
+	
+		RESPONSE_WIFI_START="{\"method\":\"_internal.wifi_connected\",\"params\":{\"ssid\":\"$ssid\",\"bssid\":\"$bssid\",\"result\":\"ok\"}}"
+	fi
+	if [ $WIFI_SUCC -eq 2 ] && [ x"$bind_status" != x"ok" ]; then
+		clear_wifi_conf
+		# CMD=$WIFI_START_SCRIPT
+		# echo "Back to AP mode, CMD=${CMD}"
+		# ${CMD} "SET_AP_MODE"
+		RESPONSE_WIFI_START="{\"method\":\"_internal.wifi_ap_mode\",\"params\":null}";
+	fi
+	if [ $WIFI_SUCC -eq 1 ]; then
+		RESPONSE_WIFI_START="{\"method\":\"_internal.wifi_connect_failed\",\"params\":{\"ssid\":\"$miio_ssid\",\"bssid\":\"$miio_bssid\",\"result\":\"error\"}}"
+	fi
+	
+	echo $RESPONSE_WIFI_START
+	if [ x"$RESPONSE_WIFI_START" != x ]; then
+		$MIIO_SEND_LINE "$RESPONSE_WIFI_START"
+	fi
+
+	if [ $WIFI_SUCC -eq 0 ]; then
+		otpidstr=`ps | grep miio_client | grep -v grep | grep -v miio_client_hel`
+		echo $otpidstr
+		otpid=${otpidstr%%root*}
+		echo $otpid
+
+		echo "kill ot pid: $otpid"
+		kill -9 $otpid
+		exit 0
+	fi
+}
+
+wifi_disconnect_req() {
+	disconnect_wifi_str=$1
+	ssid=$(echo "$disconnect_wifi_str" | $JSHON -e params -e ssid -u)
+	bssid=$(echo "$disconnect_wifi_str" | $JSHON -e params -e bssid -u)
+	
+	# bind_status=`mortoxc get nvram default bind_status`
+	bind_status=`fw_printenv user bind_status`
+
+	echo "hidden_ssid: $ssid"
+	echo "hidden_bssid: $bssid"
+	echo "bind_status:$bind_status"
+	
+	RESPONSE_DISCONNECT_WIFI="{\"method\":\"_internal.wifi_disconnect_resp\",\"params\":{\"ssid\":\"$ssid\",\"bssid\":\"$bssid\"}}";
+	echo $RESPONSE_DISCONNECT_WIFI
+	$MIIO_SEND_LINE "$RESPONSE_DISCONNECT_WIFI"
+	
+	CMD=$WIFI_START_SCRIPT
+	if [ x"$ssid" = x"$MIIO_NET_PROVISIONER_SSID" ]; then
+		if [ x"$bind_status" = x"ok" ]; then
+			${CMD} "SELECT_MASTER"
+		else
+			${CMD} "CLOSE_STA_MODE"
+		fi
+	fi
+}
+
+wifi_reconnect()
+{
+	CMD=$WIFI_START_SCRIPT
+	${CMD} "WIFI_RECONNECT"
+}
+
+wifi_reload()
+{
+	CMD=$WIFI_START_SCRIPT
+	${CMD} "WIFI_RELOAD"
+}
+
+request_query_qr_code() {
+	RESPONSE_DINFO="{\"method\":\"local.query_qr_code\",\"params\":\"\",\"id\":123456}";
+	
+	echo $RESPONSE_DINFO
+	$MIIO_SEND_LINE "$RESPONSE_DINFO"
+}
+
+main() {
+	
+	while true; do
+		BUF=`$MIIO_RECV_LINE`
+		if [ $? -ne 0 ]; then
+			sleep 1;
+			continue
+		fi
+		
+		echo "BUF: $BUF"
+		method=$(echo "$BUF" | $JSHON -e method -u)
+		echo "method: $method"
+		
+		if [ x"$method" = x"_internal.request_dinfo" ]; then
+			request_dinfo "$BUF"
+		elif [ x"$method" = x"_internal.request_ot_config" ]; then
+			request_ot_config "$BUF"
+		elif [ x"$method" = x"_internal.req_wifi_conf_status" ]; then
+			req_wifi_conf_status "$BUF"
+			#request_query_qr_code
+		elif [ x"$method" = x"_internal.update_dtoken" ]; then
+			update_dtoken "$BUF"
+		elif [ x"$method" = x"_internal.info" ]; then
+			internal_info "$BUF"
+		elif [ x"$method" = x"_internal.config_tz" ]; then
+			miio_tz=$(echo "$BUF" | $JSHON -e params -e tz -u -Q)
+			save_tz_conf "$miio_tz"
+		elif [ x"$method" = x"_internal.wifi_start" ]; then
+			wifi_start "$BUF"
+		elif [ x"$method" = x"_internal.wifi_disconnect_req" ]; then
+			wifi_disconnect_req "$BUF"
+		elif [ x"$method" = x"_internal.wifi_reconnect" ]; then
+			wifi_reconnect
+		elif [ x"$method" = x"_internal.wifi_reload" ]; then
+			wifi_reload
+		else
+			echo "Unknown cmd: $BUF"
+		fi
+	done
+}
+
+sanity_check
+send_helper_ready
+main

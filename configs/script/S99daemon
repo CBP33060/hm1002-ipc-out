@@ -1,0 +1,47 @@
+
+#!/bin/sh
+
+daemon()
+{
+    while true; do
+    proc=$(ls /var/daemon)
+    for i in $proc
+    do
+        #echo " $i"
+        server=`ps | grep $i | grep -v grep`
+        #echo " $server"
+        if [ ! "$server" ]; then
+            if [ "$i" = "cli_agent_client" ]; then
+                $i --input /dev/ttyGS0 &
+            else
+                echo " $i start..."
+                $i /etc/70mai/$i/${i/subsystem/app}.ini &
+            fi
+        fi
+    done
+    sleep 5
+    done
+}
+
+start()
+{	
+	daemon &
+}
+
+stop()
+{
+	killall daemon	
+}
+
+case "$1" in
+	start)
+		"$1"
+		;;
+	stop)
+		"$1"
+		;;
+	*)
+		echo "Usage: $0 {start}"
+		exit 1
+		;;
+esac

@@ -1,0 +1,11 @@
+reset_success           reset_success.opus              //设备重置成功
+shut_down               shut_down.opus                  //关机音效
+wifi_connect_err        wifi_connect_err.opus           //连接失败
+wifi_connect_success    wifi_connect_success.opus       //连接成功
+wifi_connecting         wifi_connecting.opus            //连接中，请稍后
+ota_upgrade_success     ota_upgrade_success.opus        //升级成功
+ota_upgrading           ota_upgrading.opus              //升级中，请稍后
+ota_upgrade_fail        ota_upgrade_fail.opus           //升级失败，请重试
+waiting_connect         waiting_connect.opus            //等待连接
+power_up                power_up.opus                   //开机音效
+warming_alarm           warming_alarm.opus              //循环播报警报音

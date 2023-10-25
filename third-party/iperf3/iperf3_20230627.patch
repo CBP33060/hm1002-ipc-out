@@ -1,0 +1,32 @@
+diff --git a/src/Makefile.am b/src/Makefile.am
+index 665cd0a..4cb844b 100644
+--- a/src/Makefile.am
++++ b/src/Makefile.am
+@@ -46,9 +46,9 @@ iperf3_LDFLAGS          = -g
+ iperf3_profile_SOURCES  = main.c \
+ 						  $(libiperf_la_SOURCES)
+ 
+-iperf3_profile_CFLAGS   = -pg -g
++iperf3_profile_CFLAGS   =  -g
+ iperf3_profile_LDADD    = libiperf.la
+-iperf3_profile_LDFLAGS  = -pg -g
++iperf3_profile_LDFLAGS  =  -g
+ 
+ # Specify the sources and various flags for the test cases
+ t_timer_SOURCES         = t_timer.c
+diff --git a/src/Makefile.in b/src/Makefile.in
+index 7eba555..e52ad92 100644
+--- a/src/Makefile.in
++++ b/src/Makefile.in
+@@ -593,9 +593,9 @@ iperf3_LDFLAGS = -g
+ iperf3_profile_SOURCES = main.c \
+ 						  $(libiperf_la_SOURCES)
+ 
+-iperf3_profile_CFLAGS = -pg -g
++iperf3_profile_CFLAGS =  -g
+ iperf3_profile_LDADD = libiperf.la
+-iperf3_profile_LDFLAGS = -pg -g
++iperf3_profile_LDFLAGS =  -g
+ 
+ # Specify the sources and various flags for the test cases
+ t_timer_SOURCES = t_timer.c

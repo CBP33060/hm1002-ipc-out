@@ -1,0 +1,525 @@
+#!/bin/sh
+# miio_client_ver: 4.3.7
+WPA_SUPPLICANT_CONFIG_FILE="/mnt/data/bin/wpa_supplicant.conf"
+
+MIIO_NET_AUTO_PROVISION=0		# 支持畅快连一键配网时，设置为1；否则设置为0
+MIIO_NET_SMART_CONFIG=0			# 支持畅快连改密同步时，设置为1；否则设置为0
+
+if [ $MIIO_NET_AUTO_PROVISION -eq 1 ]; then
+	ap_interface=p2p0
+else
+	ap_interface=wlan0
+fi
+sta_interface=wlan0
+
+
+update_wpa_conf_apsta()
+{
+	cat <<EOF > $WPA_SUPPLICANT_CONFIG_FILE
+ctrl_interface=/var/run/wpa_supplicant
+update_config=1
+network={
+	key_mgmt=WPA-PSK
+	proto=WPA WPA2
+	scan_ssid=1
+}
+EOF
+}
+
+hidden_update()
+{
+	ssid=$1
+	bssid=$2
+	
+	cat <<EOF > $WPA_SUPPLICANT_CONFIG_FILE
+ctrl_interface=/var/run/wpa_supplicant
+update_config=1
+network={
+	ssid="$ssid"
+	bssid=$bssid
+	key_mgmt=NONE
+	scan_ssid=1
+}
+EOF
+}
+
+hidden_insert()
+{
+	ssid=$1
+	bssid=$2
+	
+	cat <<EOF >> $WPA_SUPPLICANT_CONFIG_FILE
+
+network={
+	ssid="$ssid"
+	bssid=$bssid
+	key_mgmt=NONE
+	scan_ssid=1
+}
+EOF
+}
+
+master_update()
+{
+	ssid=$1
+	passwd=$2
+	
+	if [ x"$passwd" = x ]; then
+	cat <<EOF > $WPA_SUPPLICANT_CONFIG_FILE
+ctrl_interface=/var/run/wpa_supplicant
+update_config=1
+network={
+	ssid="$ssid"
+	key_mgmt=NONE
+	scan_ssid=1
+}
+EOF
+	else
+	cat <<EOF > $WPA_SUPPLICANT_CONFIG_FILE
+ctrl_interface=/var/run/wpa_supplicant
+update_config=1
+network={
+	ssid="$ssid"
+	psk="$passwd"
+	key_mgmt=WPA-PSK
+	proto=WPA WPA2
+	scan_ssid=1
+}
+EOF
+	fi
+}
+
+master_insert()
+{
+	ssid=$1
+	passwd=$2
+
+	if [ x"$passwd" = x ]; then
+
+	cat <<EOF >> $WPA_SUPPLICANT_CONFIG_FILE
+
+network={
+	ssid="$ssid"
+	key_mgmt=NONE
+	scan_ssid=1
+}
+EOF
+	else
+	cat <<EOF >> $WPA_SUPPLICANT_CONFIG_FILE
+
+network={
+	ssid="$ssid"
+	psk="$passwd"
+	key_mgmt=WPA-PSK
+	proto=WPA WPA2
+	scan_ssid=1
+}
+EOF
+	fi
+}
+
+update_wpa_conf_select_hidden()
+{
+	hide_ssid=$1
+	hide_bssid=$2
+	
+	get_master_network
+	echo "miio_ssid:$miio_ssid"
+	echo "miio_passwd:$miio_passwd"
+	echo "miio_ssid_5g:$miio_ssid_5g"
+	echo "miio_passwd_5g:$miio_passwd_5g"
+
+	bind_status=`mortoxc get nvram default bind_status`
+	echo "bind_status:$bind_status"
+	
+	if [ x"$bind_status" != x"ok" ]; then
+		hidden_update "$hide_ssid" "$hide_bssid"
+	else
+		hidden_update "$hide_ssid" "$hide_bssid"
+		if [ x"$miio_ssid" != x ]; then
+			master_insert "$miio_ssid" "$miio_passwd"
+		fi
+		if [ x"$miio_ssid_5g" != x ]; then
+			master_insert "$miio_ssid_5g" "$miio_passwd_5g"
+		fi
+	fi
+}
+
+update_wpa_conf_select_master()
+{
+	miio_ssid=$1
+	miio_passwd=$2
+	miio_ssid_5g=$3
+	miio_passwd_5g=$4
+	net_added=0
+
+	if [ x"$miio_ssid_5g" != x ]; then
+		master_update "$miio_ssid_5g" "$miio_passwd_5g"
+		net_added=1
+	fi
+
+	if [ x"$miio_ssid" != x ]; then
+		if [ $net_added -eq 0 ]; then
+			master_update "$miio_ssid" "$miio_passwd"
+		else
+			master_insert "$miio_ssid" "$miio_passwd"
+		fi
+	fi
+}
+
+get_mac()
+{
+	macstring=`factory get mac`
+
+	mac1=`echo ${macstring} | cut -d ':' -f 5`
+	mac2=`echo ${macstring} | cut -d ':' -f 6`
+	MAC=${mac1}${mac2}
+
+	echo "MAC is " $MAC
+}
+
+wifi_ap_mode()
+{
+	echo "SET wifi AP mode"
+
+	killall -9 udhcpc wpa_supplicant hostapd udhcpd
+	
+	ifconfig $sta_interface down
+	ifconfig $ap_interface down
+	
+	# open ap
+	ifconfig $ap_interface up
+	ifconfig $ap_interface 192.168.14.1 netmask 255.255.255.0
+
+	# AP mode
+	MODEL=`factory get model`
+	MODEL=`echo $MODEL| sed 's/\./-/g'`
+	echo $MODEL
+	cp /etc/hostapd.conf /tmp/
+	sed -i "s/interface=wlan0/interface=$ap_interface/g" /tmp/hostapd.conf
+	get_mac; echo "ssid=${MODEL}_miap$MAC" >> /tmp/hostapd.conf
+	mkdir -p /var/run/hostapd
+	hostapd /tmp/hostapd.conf -B 
+
+	cp /etc/udhcpd.conf /tmp/
+	sed -i "s/wlan0/$ap_interface/g" /tmp/udhcpd.conf
+	mkdir -p /var/lib/misc
+	touch /var/lib/misc/udhcpd.leases
+	udhcpd /tmp/udhcpd.conf
+}
+
+wifi_close_sta_mode()
+{
+	echo "Close wifi STA mode"
+
+	killall -9 udhcpc wpa_supplicant
+	ifconfig $sta_interface down
+}
+
+wifi_apsta_mode()
+{
+	echo "SET wifi APSTA mode"
+	echo "start_time:"
+	date
+	
+	killall -9 udhcpc wpa_supplicant hostapd udhcpd
+
+	# open sta
+	update_wpa_conf_apsta
+
+	ifconfig $sta_interface down
+	ifconfig $sta_interface up
+	iwconfig $sta_interface mode Managed
+	mkdir -p /var/run/wpa_supplicant
+	wpa_supplicant -Dnl80211 -i$sta_interface -c $WPA_SUPPLICANT_CONFIG_FILE -B
+	wpa_supplicant -Dnl80211 -i$sta_interface -c $WPA_SUPPLICANT_CONFIG_FILE -B
+	wpa_cli -i $sta_interface -B -a /mnt/data/bin/wpa_event.sh
+
+	echo 3 > /proc/sys/kernel/printk
+
+	# open ap
+	ifconfig $ap_interface down
+	ifconfig $ap_interface up
+	ifconfig $ap_interface 192.168.14.1 netmask 255.255.255.0
+
+	# AP mode
+	MODEL=`factory get model`
+	MODEL=`echo $MODEL| sed 's/\./-/g'`
+	echo $MODEL
+	cp /etc/hostapd.conf /tmp/
+	sed -i "s/interface=wlan0/interface=$ap_interface/g" /tmp/hostapd.conf
+	get_mac; echo "ssid=${MODEL}_miap$MAC" >> /tmp/hostapd.conf
+	mkdir -p /var/run/hostapd
+	hostapd /tmp/hostapd.conf -B
+
+	cp /etc/udhcpd.conf /tmp/
+	sed -i "s/wlan0/$ap_interface/g" /tmp/udhcpd.conf
+	mkdir -p /var/lib/misc
+	touch /var/lib/misc/udhcpd.leases
+	udhcpd /tmp/udhcpd.conf
+	
+	echo "end_time:"
+	date
+}
+
+channel_sync()
+{	
+	freq=`wpa_cli status |grep freq | cut -d '=' -f 2`
+	freq_base="2412"
+	freq_width="5"
+	ap_channel=$(($(($freq - $freq_base)) / $freq_width))
+	let ap_channel=$ap_channel+1
+	echo "ap_channel:$ap_channel"
+	
+	killall -9 hostapd udhcpd
+	ifconfig $ap_interface down
+	
+	# open ap
+	ifconfig $ap_interface up
+	ifconfig $ap_interface 192.168.14.1 netmask 255.255.255.0
+	
+	# AP mode
+	MODEL=`factory get model`
+	MODEL=`echo $MODEL| sed 's/\./-/g'`
+	echo $MODEL
+	cp /etc/hostapd.conf /tmp/
+	sed -i "s/interface=wlan0/interface=$ap_interface/g" /tmp/hostapd.conf
+	sed -i "s/channel=6/channel=$ap_channel/g" /tmp/hostapd.conf
+	get_mac; echo "ssid=${MODEL}_miap$MAC" >> /tmp/hostapd.conf
+	mkdir -p /var/run/hostapd
+	hostapd /tmp/hostapd.conf -B 
+
+	cp /etc/udhcpd.conf /tmp/
+	sed -i "s/wlan0/$ap_interface/g" /tmp/udhcpd.conf
+	mkdir -p /var/lib/misc
+	touch /var/lib/misc/udhcpd.leases
+	udhcpd /tmp/udhcpd.conf
+}
+
+# 开启防火墙
+# INPUT规则链中，允许udp 54321目的端口包通过
+# OUTPUT规则链中，允许udp 54321源端口包通过
+firewall_open()
+{
+	iptables -F
+	iptables -P INPUT DROP
+	iptables -A INPUT -s 127.0.0.1 -d 127.0.0.1 -j ACCEPT
+	iptables -A INPUT -p udp --dport 54321 -j ACCEPT
+	
+	iptables -P OUTPUT DROP
+	iptables -A OUTPUT -s 127.0.0.1 -d 127.0.0.1 -j ACCEPT
+	iptables -A OUTPUT -p udp --sport 54321 -j ACCEPT
+}
+
+# 关闭防火墙
+firewall_close()
+{
+	iptables -F
+	iptables -P INPUT ACCEPT
+	iptables -P OUTPUT ACCEPT
+}
+
+select_hidden_ssid()
+{
+	echo "Connecting Hidden_ssid"
+	echo "start_time:"
+	date
+	
+	hide_ssid=$1
+	hide_bssid=$2
+	
+	echo "hide_ssid: $hide_ssid"
+	echo "hide_bssid: $hide_bssid"
+
+	update_wpa_conf_select_hidden "$hide_ssid" "$hide_bssid"
+	cat $WPA_SUPPLICANT_CONFIG_FILE
+
+	#stop uap sta_interface
+	killall -9 udhcpc wpa_supplicant 
+	ifconfig $sta_interface down
+	ifconfig $sta_interface up
+	iwconfig $sta_interface mode Managed
+	mkdir -p /var/run/wpa_supplicant
+	wpa_supplicant -Dnl80211 -i$sta_interface -c $WPA_SUPPLICANT_CONFIG_FILE -B
+	wpa_supplicant -Dnl80211 -i$sta_interface -c $WPA_SUPPLICANT_CONFIG_FILE -B
+	wpa_cli -i $sta_interface -B -a /mnt/data/bin/wpa_event.sh
+
+	MODEL=`factory get model`
+	hname=`echo $MODEL| sed "s/\./_/g"`
+	echo $hname
+	udhcpc -i $sta_interface -n -S -x hostname:$hname &
+	echo 3 > /proc/sys/kernel/printk
+
+	sleep 5
+	wpa_state=`wpa_cli status | grep "wpa_state=COMPLETED"`
+
+	# 连上隐藏SSID时，开启防火墙
+	if [ x"$wpa_state" != x ]; then
+		firewall_open
+	fi
+	
+	bind_status=`mortoxc get nvram default bind_status`
+	echo "bind_status:$bind_status"
+	echo "wpa_state:$wpa_state"
+	if [ x"$wpa_state" != x ] && [ x"$bind_status" != x"ok" ]; then
+		channel_sync
+	fi
+
+	wpa_cli -i $sta_interface list_network
+	echo "end_time:"
+	date
+}
+
+select_master_ssid()
+{
+	echo "Connecting Master_ssid"
+	echo "start_time:"
+	date
+	
+	miio_ssid=$1
+	miio_passwd=$2
+	miio_ssid_5g=$3
+	miio_passwd_5g=$4
+
+	update_wpa_conf_select_master "$miio_ssid" "$miio_passwd" "$miio_ssid_5g" "$miio_passwd_5g"
+	cat $WPA_SUPPLICANT_CONFIG_FILE
+
+	#stop uap sta_interface
+	killall -9 udhcpc wpa_supplicant hostapd udhcpd
+	
+	ifconfig $ap_interface down
+	ifconfig $sta_interface down
+	
+	ifconfig $sta_interface up
+	iwconfig $sta_interface mode Managed
+	mkdir -p /var/run/wpa_supplicant
+	wpa_supplicant -Dnl80211 -i$sta_interface -c $WPA_SUPPLICANT_CONFIG_FILE -B
+	wpa_supplicant -Dnl80211 -i$sta_interface -c $WPA_SUPPLICANT_CONFIG_FILE -B
+	wpa_cli -i $sta_interface -B -a /mnt/data/bin/wpa_event.sh
+	
+	# 关闭防火墙
+	firewall_close
+
+	MODEL=`factory get model`
+	hname=`echo $MODEL| sed "s/\./_/g"`
+	echo $hname
+	udhcpc -i $sta_interface -n -S -x hostname:$hname &
+	echo 3 > /proc/sys/kernel/printk
+
+	sleep 5
+	wpa_cli -i $sta_interface list_network
+	echo "end_time:"
+	date
+}
+
+get_master_network()
+{
+	key_mgmt=`mortoxc get nvram default key_mgmt`
+	if [ $key_mgmt == "NONE" ]; then
+		miio_passwd=""
+	else
+		miio_passwd=`mortoxc get nvram default miio_passwd`
+	fi
+	miio_ssid=`mortoxc get nvram default miio_ssid`
+
+	key_mgmt_5g=`mortoxc get nvram default key_mgmt_5g`
+	if [ $key_mgmt_5g == "NONE" ]; then
+		miio_passwd_5g=""
+	else
+		miio_passwd_5g=`mortoxc get nvram default miio_passwd_5g`
+	fi
+	miio_ssid_5g=`mortoxc get nvram default miio_ssid_5g`
+}
+
+# wifi_reconnect(offline time = 15min)
+# restart wpa_supplicant dhcp/dns and network
+wifi_reconnect()
+{
+	ifconfig $sta_interface down
+	ifconfig $sta_interface up
+	
+	MODEL=`factory get model`
+	hname=`echo $MODEL| sed "s/\./_/g"`
+	echo $hname
+	
+	sleep 1
+	killall -9 wpa_supplicant
+	wpa_supplicant -Dnl80211 -i$sta_interface -c $WPA_SUPPLICANT_CONFIG_FILE -B
+	sleep 1
+	killall -9 udhcpc
+	udhcpc -i $sta_interface -n -S -x hostname:$hname &
+	sleep 1
+	
+	# 重启dns，清除dns缓存
+	/etc/init.d/network restart
+	sleep 1
+}
+
+# wifi_reload (offline time = 60min)
+# reload kernel of wifi
+# restart wpa_supplicant dhcp/dns and network
+# restart miio_client
+wifi_reload()
+{
+	# 重启驱动
+	ifconfig $sta_interface down
+	sleep 1
+	rmmod /lib32/modules/4.9.84/wireless/mt7603u_sta.ko
+	rmmod /lib32/modules/4.9.84/wireless/mtprealloc.ko
+	sleep 2
+	insmod /lib32/modules/4.9.84/wireless/mtprealloc.ko
+	sleep 1
+	insmod /lib32/modules/4.9.84/wireless/mt7603u_sta.ko
+	sleep 1
+	ifconfig $sta_interface up
+	sleep 1
+	
+	wifi_reconnect
+}
+
+start()
+{
+	bind_status=`mortoxc get nvram default bind_status`
+	echo "bind_status:$bind_status"
+	
+	if [ x"$1" = x"SET_AP_MODE" ]; then
+		wifi_ap_mode
+	fi
+	if [ x"$1" = x"SET_APSTA_MODE" ]; then
+		wifi_apsta_mode
+	fi
+	if [ x"$1" = x"CLOSE_STA_MODE" ]; then
+		wifi_close_sta_mode
+	fi
+	
+	if [ x"$1" = x"SELECT_HIDDEN" ]; then
+		hide_ssid=$2
+		hide_bssid=$3
+		select_hidden_ssid "$hide_ssid" "$hide_bssid"
+	fi
+	if [ x"$1" = x"SELECT_MASTER" ]; then
+		get_master_network
+		select_master_ssid "$miio_ssid" "$miio_passwd" "$miio_ssid_5g" "$miio_passwd_5g"
+	fi
+	
+	if [ x"$1" = x"WIFI_RECONNECT" ]; then
+		wifi_reconnect
+	fi
+	if [ x"$1" = x"WIFI_RELOAD" ]; then
+		wifi_reload
+	fi
+	
+	if [ x"$bind_status" = x"ok" ] && [ "$#" = 0 ]; then
+		get_master_network
+		select_master_ssid "$miio_ssid" "$miio_passwd" "$miio_ssid_5g" "$miio_passwd_5g"
+	fi
+	if [ x"$bind_status" != x"ok" ] && [ "$#" = 0 ]; then
+		if [ $MIIO_NET_AUTO_PROVISION -eq 1 ]; then
+			wifi_apsta_mode
+		else
+			wifi_ap_mode
+		fi
+	fi
+}
+
+start $1 $2 $3

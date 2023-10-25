@@ -1,0 +1,22 @@
+/*
+ *	irom.h
+ */
+
+#ifndef __IROM_H__
+#define __IROM_H__
+#define SPL_SIG_SIZE			512
+#define SC_KEY_SIZE				1536
+#define JUMP_OFFSET				(SPL_SIG_SIZE + SC_KEY_SIZE)
+
+/* Secure boot config */
+#define SCBOOT_SHA_BIT_LEN		256
+#define SCBOOT_SHA_BYTE_LEN		(SCBOOT_SHA_BIT_LEN / 8)
+#define SCBOOT_SHA_WORD_LEN		(SCBOOT_SHA_BIT_LEN / 32)
+#define SCBOOT_RSA_N_SHA_BSIZE	(SCBOOT_SHA_BIT_LEN / 8)
+#define SCBOOT_RSA_N_SHA_WSIZE	(SCBOOT_SHA_BIT_LEN / 32)
+#define SCBOOT_RSA_KEY_LEN		2048
+#define SCBOOT_RSA_KEY_WORD_LEN	(SCBOOT_RSA_KEY_LEN / 32)
+#define SCBOOT_RSA_KEY_BYTE_LEN	(SCBOOT_RSA_KEY_LEN / 8)
+#define HEAP_SIZE				(4 * 1024)
+
+#endif	/* __IROM_H__ */

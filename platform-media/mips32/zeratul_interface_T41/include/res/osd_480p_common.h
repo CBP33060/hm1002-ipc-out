@@ -1,0 +1,16 @@
+#ifndef __OSD_480p_COMMON__H__
+#define __OSD_480p_COMMON__H__
+#include "number_0_480p.h"
+#include "number_1_480p.h"
+#include "number_2_480p.h"
+#include "number_3_480p.h"
+#include "number_4_480p.h"
+#include "number_5_480p.h"
+#include "number_6_480p.h"
+#include "number_7_480p.h"
+#include "number_8_480p.h"
+#include "number_9_480p.h"
+#include "slash_480p.h"
+#include "colon_480p.h"
+#include "log_480p.h"
+#endif /*__OSD_480p_COMMON__H__*/

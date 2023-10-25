@@ -1,0 +1,16 @@
+#ifndef __OSD_720p_COMMON__H__
+#define __OSD_720p_COMMON__H__
+#include "number_0_720p.h"
+#include "number_1_720p.h"
+#include "number_2_720p.h"
+#include "number_3_720p.h"
+#include "number_4_720p.h"
+#include "number_5_720p.h"
+#include "number_6_720p.h"
+#include "number_7_720p.h"
+#include "number_8_720p.h"
+#include "number_9_720p.h"
+#include "slash_720p.h"
+#include "colon_720p.h"
+#include "log_720p.h"
+#endif /*__OSD_720p_COMMON__H__*/

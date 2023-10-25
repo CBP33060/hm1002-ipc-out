@@ -1,0 +1,8 @@
+#!/bin/sh
+insmod /lib/modules/usb-common.ko
+insmod /lib/modules/udc-core.ko
+insmod /lib/modules/usbcore.ko
+insmod /lib/modules/dwc2.ko
+insmod /lib/modules/libcomposite.ko
+insmod /lib/modules/usb_f_mass_storage.ko
+insmod /lib/modules/g_mass_storage.ko file=/dev/mmcblk0 stall=0 removable=1

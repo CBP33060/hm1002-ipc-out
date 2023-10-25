@@ -1,0 +1,8 @@
+先运行：
+./miio_client_helper_nomqtt.sh.mijia &
+./miio_client -l 0 -d ./config/
+
+再运行：
+./get_ot_info oob 
+解析出oob
+

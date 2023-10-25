@@ -1,0 +1,45 @@
+{
+  "model_path": "/dev/mtd10",
+  "model_version": "0.0.1",
+  "method_type": "detector",
+  "nms_threshold": 0.45,
+  "class_names": [
+    "person",
+    "package",
+    "pet",
+    "vehicle"
+  ],
+  "confidence_thresh": [0.75, 0.74, 0.78, 0.85],
+  "nms_top_k": 500,
+  "strides": [
+    8.0,
+    16.0,
+    32.0
+  ],
+  "anchor": [
+    10,
+    13,
+    16,
+    30,
+    33,
+    23,
+    30,
+    61,
+    62,
+    45,
+    59,
+    119,
+    116,
+    90,
+    156,
+    198,
+    373,
+    326
+  ],
+  "num_class": 4,
+  "box_num": 3,
+  "tracking_class_ids": [],
+  "tracking_min_hit": 1,
+  "tracking_max_disappear": 30
+
+}

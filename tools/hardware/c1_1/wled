@@ -1,0 +1,48 @@
+#!/bin/sh
+
+if [ ! -d /sys/class/pwm/pwmchip0/pwm3 ];then
+    echo 3 > /sys/class/pwm/pwmchip0/export
+fi
+
+do_on()
+{
+    shift 1
+    f=10000
+    d=50
+
+    if [ -n "$1" ]&&[ "$1" != "-" ]; then
+        f=$1
+    fi
+
+    if [ -n "$2" ]&&[ "$2" != "-" ]; then
+        d=$2
+    fi
+
+    # echo f:$f d:$d
+    f=$(($f*10))
+    d=$(($f/100*$d))
+    # echo f:$f d:$d
+
+    echo $f     > /sys/class/pwm/pwmchip0/pwm3/period
+    echo $d     > /sys/class/pwm/pwmchip0/pwm3/duty_cycle
+    echo 1      > /sys/class/pwm/pwmchip0/pwm3/enable
+}
+
+do_off()
+{
+    echo 0      > /sys/class/pwm/pwmchip0/pwm3/enable
+}
+
+
+case "$1" in
+        on)            
+            "do_$1" $*
+            ;;
+        off)
+            "do_$1"
+            ;;
+        *)
+            echo "Usage: $0 {on/off}"
+            exit 1
+            ;;
+esac

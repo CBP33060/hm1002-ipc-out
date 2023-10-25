@@ -1,0 +1,35 @@
+#!/bin/sh
+
+if [ ! -d /sys/class/gpio/gpio63/ ];then
+    echo 63 > /sys/class/gpio/export
+fi
+
+do_on()
+{
+    for i in $(seq 0 +1 1)
+    do
+        # echo 1111-$i
+        echo low    > /sys/class/gpio/gpio63/direction
+        sleep 0.1
+        echo high    > /sys/class/gpio/gpio63/direction
+        sleep 0.1
+    done
+}
+
+do_off()
+{
+    echo low    > /sys/class/gpio/gpio63/direction
+}
+
+case "$1" in
+        on)
+                "do_$1"
+                ;;
+        off)
+                "do_$1"
+                ;;
+        *)
+                echo "Usage: $0 {on/off}"
+                exit 1
+                ;;
+esac
